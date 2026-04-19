@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Prompt Visualization — Probability Space Exploration</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;600&family=IBM+Plex+Sans:wght@300;400;600&display=swap');
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      background: #080c10;
+      color: #c8d8e8;
+      font-family: 'IBM Plex Sans', sans-serif;
+      line-height: 1.6;
+    }
+
+    header {
+      padding: 48px 32px;
+      border-bottom: 1px solid #1e3a5a;
+      background: rgba(8, 12, 16, 0.5);
+      backdrop-filter: blur(8px);
+    }
+
+    h1 {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 28px;
+      font-weight: 600;
+      letter-spacing: 0.1em;
+      color: #4a9eff;
+      margin-bottom: 12px;
+    }
+
+    .subtitle {
+      font-size: 16px;
+      font-weight: 300;
+      color: #607080;
+      letter-spacing: 0.05em;
+    }
+
+    main {
+      max-width: 1000px;
+      margin: 0 auto;
+      padding: 64px 32px;
+    }
+
+    .intro {
+      margin-bottom: 56px;
+      font-size: 15px;
+      line-height: 1.8;
+      color: #8aaabb;
+    }
+
+    .intro strong {
+      color: #c8d8e8;
+    }
+
+    .visualizations {
+      display: grid;
+      gap: 32px;
+      margin-bottom: 64px;
+    }
+
+    .viz-card {
+      border: 1px solid #1e3a5a;
+      border-radius: 6px;
+      padding: 32px;
+      background: rgba(8, 12, 16, 0.6);
+      backdrop-filter: blur(8px);
+      transition: all 0.3s ease;
+      text-decoration: none;
+      display: block;
+    }
+
+    .viz-card:hover {
+      border-color: #4a9eff;
+      background: rgba(8, 12, 16, 0.8);
+      box-shadow: 0 8px 24px rgba(74, 158, 255, 0.1);
+    }
+
+    .viz-card h2 {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 16px;
+      font-weight: 600;
+      letter-spacing: 0.1em;
+      color: #4a9eff;
+      margin-bottom: 12px;
+      text-transform: uppercase;
+    }
+
+    .viz-card p {
+      font-size: 14px;
+      color: #8aaabb;
+      margin-bottom: 16px;
+      line-height: 1.7;
+    }
+
+    .modes {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+
+    .mode-badge {
+      display: inline-block;
+      padding: 6px 12px;
+      background: rgba(74, 158, 255, 0.1);
+      border: 1px solid #4a9eff;
+      border-radius: 4px;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 11px;
+      letter-spacing: 0.1em;
+      color: #4a9eff;
+      text-transform: uppercase;
+    }
+
+    .cta-btn {
+      display: inline-block;
+      margin-top: 16px;
+      padding: 10px 24px;
+      background: #4a9eff;
+      color: #080c10;
+      text-decoration: none;
+      border-radius: 4px;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      transition: all 0.2s ease;
+    }
+
+    .cta-btn:hover {
+      background: #6cb3ff;
+      box-shadow: 0 4px 12px rgba(74, 158, 255, 0.2);
+    }
+
+    .info-box {
+      background: rgba(74, 158, 255, 0.05);
+      border: 1px solid #1e3a5a;
+      border-radius: 6px;
+      padding: 24px;
+      margin-top: 48px;
+      font-size: 14px;
+      color: #8aaabb;
+      line-height: 1.8;
+    }
+
+    .info-box strong {
+      color: #c8d8e8;
+    }
+
+    footer {
+      text-align: center;
+      padding: 32px;
+      color: #607080;
+      font-size: 12px;
+      border-top: 1px solid #1e3a5a;
+      margin-top: 64px;
+    }
+
+    footer a {
+      color: #4a9eff;
+      text-decoration: none;
+    }
+
+    footer a:hover {
+      text-decoration: underline;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>Prompt Visualization</h1>
+  <p class="subtitle">Exploring how LLMs constrain token generation probability spaces</p>
+</header>
+
+<main>
+  <p class="intro">
+    These interactive 3D visualizations demonstrate fundamental concepts in how large language models generate text.
+    They show how different prompting techniques and reasoning strategies constrain the <strong>probability cone</strong>
+    — the region of possible next tokens the model considers — making outputs more predictable or more diverse.
+  </p>
+
+  <div class="visualizations">
+    <a href="cot-viz.html" class="viz-card">
+      <h2>Chain of Thought</h2>
+      <p>
+        See how step-by-step reasoning works. Each token in a chain of thought narrows the probability cone,
+        eliminating vast regions of the solution space. Compare direct answers, broken chains, and complete reasoning flows.
+      </p>
+      <div class="modes">
+        <span class="mode-badge">Chain of Thought</span>
+        <span class="mode-badge">Direct Answer</span>
+        <span class="mode-badge">Broken Chain</span>
+      </div>
+      <a href="cot-viz.html" class="cta-btn">Explore →</a>
+    </a>
+
+    <a href="prompt-space-viz.html" class="viz-card">
+      <h2>Prompt Engineering</h2>
+      <p>
+        Understand how examples anchor the embedding space. Zero-shot operates on the full probability space,
+        while few-shot examples create constructive interference, narrowing the cone. See what happens when examples conflict.
+      </p>
+      <div class="modes">
+        <span class="mode-badge">Zero-Shot</span>
+        <span class="mode-badge">One-Shot</span>
+        <span class="mode-badge">Few-Shot</span>
+        <span class="mode-badge">Noisy Examples</span>
+      </div>
+      <a href="prompt-space-viz.html" class="cta-btn">Explore →</a>
+    </a>
+  </div>
+
+  <div class="info-box">
+    <strong>Controls:</strong> Drag to rotate the 3D view, scroll to zoom. Click mode buttons to switch between different scenarios.
+    Use the replay button to restart animations. Both visualizations run in your browser — no server needed.
+  </div>
+</main>
+
+<footer>
+  <p>
+    Built with <a href="https://threejs.org">Three.js</a> |
+    <a href="https://github.com/jonphilnj/prompt-visualization">Source on GitHub</a>
+  </p>
+</footer>
+
+</body>
+</html>
