@@ -220,14 +220,12 @@
     <button class="mode-btn active" onclick="setMode('cot')">Chain of Thought</button>
     <button class="mode-btn" onclick="setMode('direct')">Direct Answer</button>
     <button class="mode-btn" onclick="setMode('broken')">Broken Chain</button>
+    <button class="mode-btn" onclick="setMode('contradictory')">Contradictory Chain</button>
     <button id="play-btn" onclick="replay()">↺ Replay</button>
+    <button id="pause-btn" onclick="togglePause()" style="font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:600;letter-spacing:0.12em;text-transform:uppercase;padding:7px 20px;border:1px solid #f59e0b;background:rgba(245,158,11,0.08);color:#f59e0b;cursor:pointer;transition:all 0.2s;">⏸ Pause</button>
+    <button onclick="stepForward()" style="font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:600;letter-spacing:0.12em;text-transform:uppercase;padding:7px 16px;border:1px solid #1e3a5a;background:rgba(8,12,16,0.8);color:#607080;cursor:pointer;transition:all 0.2s;">▶ Step</button>
   </div>
-  <div id="legend">
-    <div class="leg"><div class="leg-dot" style="background:#4a9eff"></div>reasoning step</div>
-    <div class="leg"><div class="leg-dot" style="background:#22c55e"></div>constrained region</div>
-    <div class="leg"><div class="leg-dot" style="background:#ff6b35"></div>anchor point</div>
-    <div class="leg"><div class="leg-dot" style="background:#ff4444"></div>drift / error</div>
-  </div>
+  
 </div>
 
 <div id="drag-hint">drag to rotate · scroll to zoom</div>
@@ -253,8 +251,8 @@ scene.add(dl);
 
 // ── Orbit ─────────────────────────────────────────────────────────────────────
 let drag = false, pm = {x:0,y:0};
-let sph = { theta: 0.5, phi: 0.75, r: 8 };
-const lookAt = new THREE.Vector3(1.5, 1, 0);
+let sph = { theta: 0.5, phi: 0.6, r: 16 };
+const lookAt = new THREE.Vector3(-1.0, -0.3, 0.0);
 
 function updateCam() {
   camera.position.set(
@@ -289,9 +287,9 @@ el.addEventListener('touchmove', e=>{
 function makeGrid() {
   const g = new THREE.Group();
   const mat = new THREE.LineBasicMaterial({color:0x1a2a3a, transparent:true, opacity:0.3});
-  for(let i=-1;i<=5;i++){
-    const h=new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(-1,0,i),new THREE.Vector3(5,0,i)]);
-    const v=new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(i,0,-1),new THREE.Vector3(i,0,5)]);
+  for(let i=-4;i<=5;i++){
+    const h=new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(-4,0,i),new THREE.Vector3(5,0,i)]);
+    const v=new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(i,0,-4),new THREE.Vector3(i,0,5)]);
     g.add(new THREE.Line(h,mat)); g.add(new THREE.Line(v,mat));
   }
   return g;
@@ -323,32 +321,99 @@ function cone(origin, direction, halfAngle, color, opacity, wire=false) {
   const len = 0.9;
   const rad = len * Math.tan(halfAngle);
   const geo = new THREE.ConeGeometry(rad, len, 24, 1, true);
-  geo.translate(0, len/2, 0);
+  // Shift so tip is at y=0, base at y=-len (opens in -Y by default)
+  geo.translate(0, -len/2, 0);
   const mat = wire
     ? new THREE.MeshBasicMaterial({color, wireframe:true, transparent:true, opacity: opacity*0.4})
     : new THREE.MeshPhongMaterial({color, transparent:true, opacity, side:THREE.DoubleSide, depthWrite:false});
   const mesh = new THREE.Mesh(geo, mat);
-  mesh.position.copy(origin);
   const dir = direction.clone().normalize();
-  mesh.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,1,0), dir));
+  // Align -Y to dir so cone opens toward dir with tip at origin
+  const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,-1,0), dir);
+  mesh.quaternion.copy(q);
+  mesh.position.copy(origin);
   return mesh;
 }
 
-function cloud(center, dir, halfAngle, count, color, spreadLen=0.7) {
-  const positions = [];
+// Real GloVe PCA word positions (from prompt-geometry-viz)
+// Coordinates match prompt-geometry-viz exactly: size→X, type→Y, spec→Z, SCALE=3.5
+const S = 3.5;
+const W = {
+  cat:       new THREE.Vector3(-1.6029*S, -0.4253*S, -0.3635*S),
+  lion:      new THREE.Vector3(-0.8531*S, -0.3207*S,  0.0102*S),
+  whale:     new THREE.Vector3(-0.5786*S, -0.2444*S,  0.1542*S),
+  paris:     new THREE.Vector3( 0.3903*S, -0.0240*S, -1.2324*S),
+  tokyo:     new THREE.Vector3( 0.6486*S,  0.0737*S, -0.8751*S),
+  london:    new THREE.Vector3( 0.4980*S,  0.0345*S, -1.0709*S),
+  cairo:     new THREE.Vector3( 0.7210*S,  0.0680*S, -0.7107*S),
+  happy:     new THREE.Vector3(-0.4097*S,  0.4338*S,  0.2076*S),
+  angry:     new THREE.Vector3( 0.4573*S,  0.5840*S,  0.6607*S),
+  fear:      new THREE.Vector3( 0.3703*S,  0.6396*S,  0.5933*S),
+  joy:       new THREE.Vector3(-0.2208*S,  0.4649*S,  0.3167*S),
+  computer:  new THREE.Vector3( 0.6330*S, -0.5958*S,  0.5821*S),
+  algorithm: new THREE.Vector3( 0.8757*S, -0.5110*S,  0.7147*S),
+  software:  new THREE.Vector3( 0.7146*S, -0.5610*S,  0.6210*S),
+  bread:     new THREE.Vector3(-0.5704*S,  0.1948*S,  0.1535*S),
+  wine:      new THREE.Vector3(-0.4328*S,  0.1566*S,  0.2157*S),
+  apple:     new THREE.Vector3(-0.6404*S,  0.0322*S,  0.0228*S),
+};
+
+// Word dots for scene context
+const WORD_COLORS = {
+  cat:0x1D9E75, lion:0x1D9E75, whale:0x1D9E75,
+  paris:0xD85A30, tokyo:0xD85A30, london:0xD85A30, cairo:0xD85A30,
+  happy:0xE040FB, angry:0xE040FB, fear:0xE040FB, joy:0xE040FB,
+  computer:0x7F77DD, algorithm:0x7F77DD, software:0x7F77DD,
+  bread:0x888780, wine:0x888780, apple:0x888780,
+};
+
+const wordDotMeshes = {};
+const wordSprites = {};
+function addWordDots() {
+  Object.entries(W).forEach(([word, pos]) => {
+    const c = WORD_COLORS[word];
+    const dot = sphere(pos, 0.06, c, 0.7);
+    scene.add(dot);
+    wordDotMeshes[word] = dot;
+    const canvas = document.createElement('canvas');
+    canvas.width = 200; canvas.height = 48;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = `#${c.toString(16).padStart(6,'0')}`;
+    ctx.font = 'bold 20px IBM Plex Mono, monospace';
+    ctx.fillText(word, 6, 32);
+    const tex = new THREE.CanvasTexture(canvas);
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({map:tex, transparent:true, opacity:0.5}));
+    sprite.position.copy(pos).add(new THREE.Vector3(0, 0.25, 0));
+    sprite.scale.set(1.2, 0.28, 1);
+    scene.add(sprite);
+    wordSprites[word] = sprite;
+  });
+}
+addWordDots();
+
+function highlightDotsInCone(origin, dir, halfAngle, highlightColor) {
   const d = dir.clone().normalize();
-  let gen = 0;
-  while(gen < count) {
-    const v = new THREE.Vector3((Math.random()-.5)*2,(Math.random()-.5)*2,(Math.random()-.5)*2).normalize();
-    if(v.angleTo(d) < halfAngle) {
-      const t = 0.05 + Math.random()*spreadLen;
-      positions.push(center.x+v.x*t, center.y+v.y*t, center.z+v.z*t);
-      gen++;
+  Object.entries(W).forEach(([word, pos]) => {
+    const toWord = new THREE.Vector3().subVectors(pos, origin);
+    const angle = toWord.length() > 0.01 ? toWord.normalize().angleTo(d) : 0;
+    const dot = wordDotMeshes[word];
+    const sprite = wordSprites[word];
+    if(angle < halfAngle) {
+      dot.material.color.setHex(0xffdd44);
+      dot.material.emissive.setHex(0xffaa00);
+      dot.material.emissiveIntensity = 0.9;
+      dot.material.opacity = 1.0;
+      dot.scale.setScalar(1.8);
+      sprite.material.opacity = 1.0;
+    } else {
+      dot.material.color.setHex(WORD_COLORS[word]);
+      dot.material.emissive.setHex(0x000000);
+      dot.material.emissiveIntensity = 0.1;
+      dot.material.opacity = 0.25;
+      dot.scale.setScalar(1.0);
+      sprite.material.opacity = 0.3;
     }
-  }
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions,3));
-  return new THREE.Points(geo, new THREE.PointsMaterial({color, size:0.035, transparent:true, opacity:0.55}));
+  });
 }
 
 // ── Mode data ─────────────────────────────────────────────────────────────────
@@ -358,27 +423,133 @@ const MODES = {
   cot: {
     label: 'CHAIN OF THOUGHT',
     steps: [
-      { label: 'Initial Prompt', desc: 'Wide cone — model hasn\'t committed to any reasoning path yet.', color: '#4a9eff', pos: new THREE.Vector3(0,0,0), dir: new THREE.Vector3(0.3,1,0.2), angle: Math.PI/4 },
-      { label: 'Step 1: Identify knowns', desc: 'First reasoning token narrows space — cone origin moves, angle tightens.', color: '#a78bfa', pos: new THREE.Vector3(0.8,0.6,0.3), dir: new THREE.Vector3(0.4,1,0.1), angle: Math.PI/7 },
-      { label: 'Step 2: Apply constraint', desc: 'Second step further anchors — prior commit eliminates vast regions.', color: '#22c55e', pos: new THREE.Vector3(1.5,1.1,0.4), dir: new THREE.Vector3(0.5,1,0.05), angle: Math.PI/12 },
-      { label: 'Step 3: Derive intermediate', desc: 'Cone tightens again — the path through space is now strongly defined.', color: '#fb923c', pos: new THREE.Vector3(2.2,1.5,0.45), dir: new THREE.Vector3(0.55,1,0.0), angle: Math.PI/20 },
-      { label: 'Final Answer', desc: 'Tiny cone — constrained by every prior step. Variance is minimal.', color: '#f9a8d4', pos: new THREE.Vector3(2.9,1.85,0.48), dir: new THREE.Vector3(0.6,1,-0.05), angle: Math.PI/40 },
+      {
+        label: 'Initial Prompt: "Write about an animal"',
+        desc: 'Wide cone from origin toward the animal cluster. Cat, lion, whale, and nearby words illuminated — high variance.',
+        color: '#4a9eff',
+        pos: new THREE.Vector3(0.0, 0.0, 0.0),
+        dir: new THREE.Vector3(-0.9488, -0.3097, -0.0623).normalize(),
+        angle: Math.PI/4
+      },
+      {
+        label: 'Step 1: "A large animal"',
+        desc: 'Cone vertex at previous arrow tip. Beam narrows toward lion and whale. Cat fades out.',
+        color: '#a78bfa',
+        pos: new THREE.Vector3(0, 0, 0),
+        dir: new THREE.Vector3(-0.9023, -0.3880, 0.1878).normalize(),
+        angle: Math.PI/9
+      },
+      {
+        label: 'Step 2: "A large ocean animal"',
+        desc: 'Cone vertex at previous arrow tip. Beam tightens — whale now alone in beam.',
+        color: '#22c55e',
+        pos: new THREE.Vector3(0, 0, 0),
+        dir: new THREE.Vector3(-0.5962, -0.3777, 0.7085).normalize(),
+        angle: Math.PI/16
+      },
+      {
+        label: 'Final Answer: "The Blue Whale"',
+        desc: 'Tiny cone from final anchor — constrained by every prior step. Variance minimal. The answer was earned through sequential commitment.',
+        color: '#fb923c',
+        pos: new THREE.Vector3(0, 0, 0),
+        dir: new THREE.Vector3(0.5962, 0.3777, -0.7085).normalize(),
+        angle: Math.PI/32
+      },
     ]
   },
   direct: {
     label: 'DIRECT ANSWER (no CoT)',
     steps: [
-      { label: 'Initial Prompt', desc: 'Same starting cone as CoT — wide, unconstrained.', color: '#4a9eff', pos: new THREE.Vector3(0,0,0), dir: new THREE.Vector3(0.3,1,0.2), angle: Math.PI/4 },
-      { label: 'Answer Token', desc: 'No intermediate steps. Model jumps directly to answer from the wide starting cone. High variance — the answer could land anywhere in the original space.', color: '#ff4444', pos: new THREE.Vector3(1.5,0.9,1.2), dir: new THREE.Vector3(0.8,1,0.6), angle: Math.PI/4.5 },
+      {
+        label: 'Initial Prompt: "Write about an animal"',
+        desc: 'Same wide starting cone from origin — pointing toward the animal cluster.',
+        color: '#4a9eff',
+        pos: new THREE.Vector3(0.0, 0.0, 0.0),
+        dir: new THREE.Vector3(-0.9488, -0.3097, -0.0623).normalize(),
+        angle: Math.PI/4
+      },
+      {
+        label: 'Direct Answer — no reasoning steps',
+        desc: 'No intermediate steps. Wide cone remains — could output cat, lion, whale, or nearby food words with similar probability. High variance.',
+        color: '#ff4444',
+        pos: new THREE.Vector3(0, 0, 0),
+        dir: new THREE.Vector3(-0.9488, -0.3097, -0.0623).normalize(),
+        angle: Math.PI/4
+      },
     ]
   },
   broken: {
     label: 'BROKEN CHAIN (reasoning error)',
     steps: [
-      { label: 'Initial Prompt', desc: 'Standard start — wide cone.', color: '#4a9eff', pos: new THREE.Vector3(0,0,0), dir: new THREE.Vector3(0.3,1,0.2), angle: Math.PI/4 },
-      { label: 'Step 1: Correct', desc: 'First step is sound — cone narrows appropriately.', color: '#a78bfa', pos: new THREE.Vector3(0.8,0.6,0.3), dir: new THREE.Vector3(0.4,1,0.1), angle: Math.PI/7 },
-      { label: 'Step 2: Error introduced', desc: 'A flawed reasoning step shifts the cone origin — the path drifts from the correct region.', color: '#ff4444', pos: new THREE.Vector3(1.7,0.5,1.1), dir: new THREE.Vector3(0.9,0.6,0.8), angle: Math.PI/6 },
-      { label: 'Step 3: Compounds error', desc: 'Each subsequent step anchors to the wrong location. The final answer is tightly constrained — but around the wrong point.', color: '#ff6b35', pos: new THREE.Vector3(2.8,0.2,1.9), dir: new THREE.Vector3(1.0,0.4,1.0), angle: Math.PI/14 },
+      {
+        label: 'Prompt: "Where can you find Apple?"',
+        desc: 'Wide cone toward apple — ambiguous between fruit and company. Apple, bread, wine all illuminated. Correct answer: Cupertino, CA (Apple Inc. HQ).',
+        color: '#4a9eff',
+        pos: new THREE.Vector3(0.0, 0.0, 0.0),
+        dir: new THREE.Vector3(-0.9981, 0.0502, 0.0355).normalize(),
+        angle: Math.PI/4
+      },
+      {
+        label: 'Step 1: "Apples are nutritious and good to eat"',
+        desc: 'The model silently commits to the fruit meaning. Cone narrows toward the food cluster. The error is invisible — the reasoning sounds perfectly fine.',
+        color: '#a78bfa',
+        pos: new THREE.Vector3(0, 0, 0),
+        dir: new THREE.Vector3(-0.8671, 0.3423, 0.3619).normalize(),
+        angle: Math.PI/9
+      },
+      {
+        label: 'Step 2: "Food is found in grocery stores"',
+        desc: 'Still sounds coherent. Beam tightens deeper into food cluster. Every step faithfully compounds the original error.',
+        color: '#ff4444',
+        pos: new THREE.Vector3(0, 0, 0),
+        dir: new THREE.Vector3(-0.6470, 0.6691, 0.3657).normalize(),
+        angle: Math.PI/10
+      },
+      {
+        label: 'Step 3: "A grocery store"',
+        desc: 'Confidently wrong — if the question was about Apple Inc. Tight cone locked on food. The model isn\'t lost. It\'s precise about the wrong thing.',
+        color: '#ff6b35',
+        pos: new THREE.Vector3(0, 0, 0),
+        dir: new THREE.Vector3(0.5246, -0.7758, -0.3505).normalize(),
+        angle: Math.PI/16
+      },
+    ]
+  },
+  contradictory: {
+    label: 'CONTRADICTORY CHAIN',
+    steps: [
+      {
+        label: 'Prompt: "Where can you find Apple?"',
+        desc: 'Wide cone — apple ambiguous between fruit and company. Both food and animal clusters illuminated.',
+        color: '#4a9eff',
+        pos: new THREE.Vector3(0.0, 0.0, 0.0),
+        dir: new THREE.Vector3(-0.9981, 0.0502, 0.0355).normalize(),
+        angle: Math.PI/4
+      },
+      {
+        label: 'Step 1: "Apples are nutritious and good to eat"',
+        desc: 'Silently commits to the fruit meaning. Cone narrows into food cluster — bread illuminated. The error is invisible.',
+        color: '#a78bfa',
+        pos: new THREE.Vector3(0, 0, 0),
+        dir: new THREE.Vector3(-0.8671, 0.3423, 0.3619).normalize(),
+        angle: Math.PI/9
+      },
+      {
+        label: 'Step 2: "Apple\'s stock price went up yesterday"',
+        desc: 'Contradiction — now reasoning about the company. Cone pivots back toward tech cluster from a food anchor. The chain is internally incoherent — arguing about two different things.',
+        color: '#ff4444',
+        pos: new THREE.Vector3(0, 0, 0),
+        dir: new THREE.Vector3(0.8211, -0.4418, 0.3613).normalize(),
+        angle: Math.PI/8
+      },
+      {
+        label: 'Final answer: undefined',
+        desc: 'The chain has zigzagged across semantic space — fruit → tech. No coherent answer is possible. In practice the model may confabulate a confident response that blends both meanings incoherently.',
+        color: '#ff6b35',
+        pos: new THREE.Vector3(0, 0, 0),
+        dir: new THREE.Vector3(0.8211, -0.4418, 0.3613).normalize(),
+        angle: Math.PI/13
+      },
     ]
   }
 };
@@ -414,43 +585,137 @@ function activateCard(i) {
   });
 }
 
+const BEAM_LEN = 1.4;
+
+
+
+const coneMeshes = [];
+const CONE_LEN = 0.9; // shared constant — cone and arrow use same length
+
+function makeBeam(pos, dir, angle, color) {
+  // Single group: cone + arrow sharing exact origin and direction
+  const group = new THREE.Group();
+  const d = dir.clone().normalize();
+
+  // Cone: tip at group origin, opens along +dir
+  const rad = CONE_LEN * Math.tan(angle);
+  const coneGeo = new THREE.ConeGeometry(rad, CONE_LEN, 24, 1, true);
+  coneGeo.translate(0, -CONE_LEN/2, 0); // tip at y=0, base at y=-CONE_LEN
+  const solidMat = new THREE.MeshPhongMaterial({color, transparent:true, opacity:0.08, side:THREE.DoubleSide, depthWrite:false});
+  const wireMat  = new THREE.MeshBasicMaterial({color, wireframe:true, transparent:true, opacity:0.25});
+  const solidMesh = new THREE.Mesh(coneGeo, solidMat);
+  const wireMesh  = new THREE.Mesh(coneGeo.clone(), wireMat);
+
+  // Rotate so -Y aligns with dir (cone opens in dir direction)
+  const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,-1,0), d);
+  solidMesh.quaternion.copy(q);
+  wireMesh.quaternion.copy(q);
+  group.add(solidMesh);
+  group.add(wireMesh);
+
+  // Arrow: same origin, same direction, same length as cone
+  const arrowTip = d.clone().multiplyScalar(CONE_LEN * 0.92);
+  const arrowHelper = new THREE.ArrowHelper(d, new THREE.Vector3(0,0,0), CONE_LEN, color, 0.12, 0.07);
+  group.add(arrowHelper);
+
+  // Small origin dot
+  const dot = new THREE.Mesh(new THREE.SphereGeometry(0.05,12,12), new THREE.MeshPhongMaterial({color, emissive:color, emissiveIntensity:0.5}));
+  group.add(dot);
+
+  group.position.copy(pos);
+  return group;
+}
+
 function addStep(stepIdx) {
   const mode = MODES[currentMode];
   const s = mode.steps[stepIdx];
   const prev = stepIdx > 0 ? mode.steps[stepIdx-1] : null;
   const color = parseInt(s.color.replace('#',''), 16);
 
-  // Cone at this step's origin
-  activeGroup.add(cone(s.pos, s.dir, s.angle, color, 0.08));
-  activeGroup.add(cone(s.pos, s.dir, s.angle, color, 0.0, true));
-
-  // Scatter cloud
-  activeGroup.add(cloud(s.pos, s.dir, s.angle, 60, color, 0.75));
-
-  // Sphere anchor
-  activeGroup.add(sphere(s.pos, 0.07, color));
-
-  // Tube from prev to this
+  // Compute this step's actual position from previous arrow tip
   if(prev) {
-    const pts = [prev.pos.clone(), s.pos.clone()];
-    activeGroup.add(tube(pts, color, 0.018));
-    activeGroup.add(arrow(prev.pos.clone(), s.pos.clone(), color, 0.07));
+    const prevTip = prev.pos.clone().add(prev.dir.clone().normalize().multiplyScalar(CONE_LEN));
+    s.pos.copy(prevTip);
+    // Connecting tube from previous step origin to this step origin (= prev arrow tip)
+    activeGroup.add(tube([prev.pos.clone(), s.pos.clone()], color, 0.015, 0.7));
   }
+
+  // Beam group: cone + arrow as one unit
+  const beam = makeBeam(s.pos, s.dir, s.angle, color);
+  activeGroup.add(beam);
+  coneMeshes.push(beam);
+
+  // Keep only last 2 beams visible
+  if(coneMeshes.length > 2) {
+    activeGroup.remove(coneMeshes.shift());
+  }
+
+  // Highlight semantic word dots in beam — yellow, with labels
+  highlightDotsInCone(s.pos, s.dir, s.angle, 0xffdd44);
 
   activateCard(stepIdx);
 }
 
 function replay() {
   clearTimeout(animTimer);
+  paused = false;
+  const btn = document.getElementById('pause-btn');
+  if(btn) { btn.textContent='⏸ Pause'; btn.style.borderColor='#f59e0b'; btn.style.color='#f59e0b'; btn.style.background='rgba(245,158,11,0.08)'; }
   scene.remove(activeGroup);
   activeGroup = new THREE.Group();
   scene.add(activeGroup);
   builtSteps = [];
   animStep = -1;
+  coneMeshes.length = 0;
+  // Reset all dot highlights
+  Object.entries(W).forEach(([word, pos]) => {
+    const dot = wordDotMeshes[word];
+    dot.material.color.setHex(WORD_COLORS[word]);
+    dot.material.emissive.setHex(0x000000);
+    dot.material.emissiveIntensity = 0.2;
+    dot.material.opacity = 0.7;
+    dot.scale.setScalar(1.0);
+    wordSprites[word].material.opacity = 0.5;
+  });
   runAnimation();
 }
 
+let paused = false;
+
+function togglePause() {
+  paused = !paused;
+  const btn = document.getElementById('pause-btn');
+  if(paused) {
+    clearTimeout(animTimer);
+    btn.textContent = '▶ Resume';
+    btn.style.borderColor = '#22c55e';
+    btn.style.color = '#22c55e';
+    btn.style.background = 'rgba(34,197,94,0.08)';
+  } else {
+    btn.textContent = '⏸ Pause';
+    btn.style.borderColor = '#f59e0b';
+    btn.style.color = '#f59e0b';
+    btn.style.background = 'rgba(245,158,11,0.08)';
+    runAnimation();
+  }
+}
+
+function stepForward() {
+  clearTimeout(animTimer);
+  paused = true;
+  const btn = document.getElementById('pause-btn');
+  btn.textContent = '▶ Resume';
+  btn.style.borderColor = '#22c55e';
+  btn.style.color = '#22c55e';
+  btn.style.background = 'rgba(34,197,94,0.08)';
+  const steps = MODES[currentMode].steps;
+  animStep++;
+  if(animStep >= steps.length) { animStep = steps.length - 1; return; }
+  addStep(animStep);
+}
+
 function runAnimation() {
+  if(paused) return;
   const steps = MODES[currentMode].steps;
   animStep++;
   if(animStep >= steps.length) return;
@@ -473,7 +738,6 @@ setTimeout(() => runAnimation(), 400);
 // ── Render loop ───────────────────────────────────────────────────────────────
 function animate() {
   requestAnimationFrame(animate);
-  if(!drag) { sph.theta += 0.0015; updateCam(); }
   renderer.render(scene, camera);
 }
 animate();

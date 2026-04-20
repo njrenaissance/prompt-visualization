@@ -29,7 +29,10 @@
   .fl2-legend { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 10px; font-size: 13px; color: #888; }
   .fl2-ldot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; vertical-align: middle; margin-right: 4px; }
   .temp-note { font-size: 12px; color: #666; margin-top: 4px; margin-bottom: 8px; }
-  .footer { font-size: 11px; color: #555; margin-top: 12px; }
+  .shot-btn { font-size:12px;padding:5px 12px;border-radius:6px;border:0.5px solid #333;background:#1a1a1a;color:#888;cursor:pointer;transition:all 0.15s; }
+  .shot-btn:hover { border-color:#555;color:#ccc; }
+  .shot-btn.active { border-color:#4a9eff;color:#4a9eff;background:#0a1828; }
+  .example-dot { display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px;vertical-align:middle; }
 </style>
 </head>
 <body>
@@ -51,6 +54,18 @@
   <div style="margin-bottom:12px; display:flex; gap:8px;">
     <button id="reset-btn" style="font-size:12px;padding:5px 14px;border-radius:6px;border:0.5px solid #444;background:#1a1a1a;color:#ccc;cursor:pointer;">Reset view</button>
     <button id="beam-toggle" style="font-size:12px;padding:5px 14px;border-radius:6px;border:0.5px solid #cc9900;background:#1a1a1a;color:#ffdd44;cursor:pointer;">Flashlight: ON</button>
+  </div>
+
+  <div style="margin-bottom:12px;padding:10px 14px;background:#111;border-radius:6px;border:0.5px solid #222;">
+    <div style="font-size:12px;color:#888;font-weight:500;margin-bottom:8px;">Few-shot examples — each narrows the cone toward the target region</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+      <button class="shot-btn active" onclick="setShots(0)" id="shot0">Zero-shot</button>
+      <button class="shot-btn" onclick="setShots(1)" id="shot1">+ 1 example</button>
+      <button class="shot-btn" onclick="setShots(2)" id="shot2">+ 2 examples</button>
+      <button class="shot-btn" onclick="setShots(3)" id="shot3">+ 3 examples</button>
+    </div>
+    <div id="shot-desc" style="font-size:12px;color:#666;line-height:1.6;">No examples — wide cone, high variance. The model navigates from the prompt vector alone.</div>
+    <div style="font-size:11px;color:#444;margin-top:6px;line-height:1.5;">⚠ Example vectors are approximated by single word embeddings for illustration. In practice, a few-shot example is a full input-output pair whose embedding would land near these positions in the space. The geometric behavior — centroid shift, cone narrowing — is accurate.</div>
   </div>
 
   <div style="position:relative;">
@@ -183,30 +198,130 @@ const beamLine=new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THRE
 root.add(beamLine);
 const arrowHead=new THREE.Mesh(new THREE.ConeGeometry(0.06,0.2,12),new THREE.MeshStandardMaterial({color:0xffdd44,emissive:0xffaa00,emissiveIntensity:0.3}));
 root.add(arrowHead);
-let beamDir=new THREE.Vector3(1,0,1).normalize(), halfAngle=25*Math.PI/180;
-let beamOn=true;
-function applyVec(v){beamDir=semVecArr(v).normalize();updateViz();}
+// ── Few-shot examples ─────────────────────────────────────────────────────────
+// Each "example" is approximated by a single word's embedding vector.
+// In practice, a few-shot example is a full input-output pair whose embedding
+// would land near these words in the space. This is a geometric approximation
+// for illustration — the behavior (centroid shift, cone narrowing) is correct.
+const PRESET_EXAMPLES = {
+  animals:    ['cat','lion','whale'],
+  cities:     ['paris','london','tokyo'],
+  emotions:   ['happy','joy','fear'],
+  technology: ['computer','software','algorithm'],
+  food:       ['bread','wine','apple'],
+};
+// Example phrases shown in the UI — what the "example" would look like in a real prompt
+const PRESET_EXAMPLE_PHRASES = {
+  animals:    ['"The cat stalked silently..." → animal behavior', '"A lion roars at dawn..." → animal behavior', '"The whale breaches..." → animal behavior'],
+  cities:     ['"Paris is known for..." → European city', '"London\'s streets..." → European city', '"Tokyo\'s skyline..." → Asian city'],
+  emotions:   ['"She felt happy when..." → positive emotion', '"Joy swept over him..." → positive emotion', '"Fear gripped her..." → negative emotion'],
+  technology: ['"The computer processed..." → technology', '"An algorithm sorts..." → technology', '"Software runs on..." → technology'],
+  food:       ['"Freshly baked bread..." → food', '"A glass of wine..." → food', '"An apple a day..." → food'],
+};
+const EXAMPLE_COLORS = ['#4a9eff','#22c55e','#fb923c'];
+const SHOT_DESCS = [
+  'Zero-shot — no examples. Wide cone, high variance. The model navigates from the prompt vector alone.',
+  '1 example added. Its embedding vector (approximated here by a word vector) combines with the prompt — the centroid shifts and the cone narrows.',
+  '2 examples added. Effective direction: p = normalize(prompt + e₁ + e₂). Coherent examples produce constructive interference — cone tightens further.',
+  '3 examples added. Cone is tightest — each coherent example eliminates degrees of freedom. Note: example vectors are approximated by word embeddings for illustration.',
+];
+
+let numShots = 0;
+let activePresetLabel = 'animals';
+const exampleSpheres = [];
+const exampleLines = [];
+
+function getExampleVecs(n) {
+  const keys = PRESET_EXAMPLES[activePresetLabel] || [];
+  return keys.slice(0, n).map(k => {
+    const w = WORDS.find(x => x.label === k);
+    return w ? [w.size, w.type, w.spec] : null;
+  }).filter(Boolean);
+}
+
+function shotAngleScale(n) {
+  // Each example narrows the cone — scale factor per shot count
+  return [1.0, 0.65, 0.42, 0.28][n] ?? 0.28;
+}
+
+function setShots(n) {
+  numShots = n;
+  document.querySelectorAll('.shot-btn').forEach((b,i) => {
+    b.classList.toggle('active', i === n);
+  });
+  document.getElementById('shot-desc').textContent = SHOT_DESCS[n];
+  updateViz();
+  drawExampleDots();
+}
+
+function drawExampleDots() {
+  // Remove old example meshes
+  exampleSpheres.forEach(s => root.remove(s));
+  exampleLines.forEach(l => root.remove(l));
+  exampleSpheres.length = 0; exampleLines.length = 0;
+
+  const exVecs = getExampleVecs(numShots);
+  exVecs.forEach((v, i) => {
+    const pos = semVecArr(v).multiplyScalar(SCALE);
+    const col = parseInt(EXAMPLE_COLORS[i].replace('#',''), 16);
+    // Glowing dot at word position
+    const sm = new THREE.Mesh(
+      new THREE.SphereGeometry(0.09, 16, 16),
+      new THREE.MeshStandardMaterial({color: col, emissive: col, emissiveIntensity: 0.6})
+    );
+    sm.position.copy(pos); root.add(sm); exampleSpheres.push(sm);
+    // Line from origin to example
+    const ln = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,0,0), pos]),
+      new THREE.LineBasicMaterial({color: col, opacity: 0.8, transparent: true})
+    );
+    root.add(ln); exampleLines.push(ln);
+  });
+}
+
+function setMode(label) {
+  activePresetLabel = label;
+  drawExampleDots();
+  updateViz();
+}
+
+function effectiveBeamDir() {
+  if (numShots === 0) return beamDir.clone();
+  // Centroid of prompt vector + example vectors
+  const sum = beamDir.clone();
+  getExampleVecs(numShots).forEach(v => sum.add(semVecArr(v).normalize()));
+  return sum.normalize();
+}
+
+
+let beamDir = new THREE.Vector3(1,0,1).normalize();
+let halfAngle = 25 * Math.PI / 180;
+let beamOn = true;
+function applyVec(v){ beamDir = semVecArr(v).normalize(); updateViz(); }
+
 function updateViz(){
   const t=parseFloat(document.getElementById('fl2-width').value);
-  halfAngle=tempToAngle(t);
+  const baseAngle=tempToAngle(t);
+  halfAngle = baseAngle * shotAngleScale(numShots);
   document.getElementById('temp-note').textContent=tempDescription(t);
+  const effDir = effectiveBeamDir();
   const radius=Math.tan(halfAngle)*CONE_LEN;
   coneGrp.visible=beamOn;
   beamLine.visible=beamOn;
   arrowHead.visible=beamOn;
   if(!beamOn) return;
-  coneGrp.quaternion.setFromUnitVectors(new THREE.Vector3(0,-1,0),beamDir);
-  coneGrp.position.copy(beamDir.clone().multiplyScalar(CONE_LEN/2));
+  coneGrp.quaternion.setFromUnitVectors(new THREE.Vector3(0,-1,0),effDir);
+  coneGrp.position.copy(effDir.clone().multiplyScalar(CONE_LEN/2));
   coneGrp.scale.set(radius,CONE_LEN,radius);
-  beamLine.geometry.setFromPoints([new THREE.Vector3(0,0,0),beamDir.clone().multiplyScalar(CONE_LEN*1.05)]);
-  const tipPos=beamDir.clone().multiplyScalar(CONE_LEN*1.05);
+  beamLine.geometry.setFromPoints([new THREE.Vector3(0,0,0),effDir.clone().multiplyScalar(CONE_LEN*1.05)]);
+  const tipPos=effDir.clone().multiplyScalar(CONE_LEN*1.05);
   arrowHead.position.copy(tipPos);
-  arrowHead.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),beamDir);
+  arrowHead.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),effDir);
   arrowHead.visible=beamOn;
-  document.getElementById('vec-readout').textContent=`[${beamDir.x.toFixed(2)}, ${beamDir.y.toFixed(2)}, ${beamDir.z.toFixed(2)}]`;
+  document.getElementById('vec-readout').textContent=`[${effDir.x.toFixed(2)}, ${effDir.y.toFixed(2)}, ${effDir.z.toFixed(2)}]`;
   const inBeam=[];
   spheres.forEach((sm,i)=>{
-    const angle=Math.acos(Math.max(-1,Math.min(1,beamDir.dot(normVecs[i]))));
+    const angle=Math.acos(Math.max(-1,Math.min(1,effDir.dot(normVecs[i]))));
     const lit=angle<halfAngle;
     const w=WORDS[i];
     if(lit&&beamOn){sm.material.color.set(0xffdd44);sm.material.emissiveIntensity=0.5;lines[i].material.color.set(0xffdd44);lines[i].material.opacity=0.9;inBeam.push(w.label);}
@@ -222,7 +337,9 @@ PRESETS.forEach(p=>{
     document.querySelectorAll('.preset-btn').forEach(b=>b.classList.remove('active'));
     btn.classList.add('active');
     document.getElementById('vec-prompt-label').textContent=p.desc;
+    activePresetLabel = p.label;
     applyVec(p.vec);
+    drawExampleDots();
   });
   presetRow.appendChild(btn);
 });
@@ -287,9 +404,10 @@ function animate(){
     lctx.fillText(text,sc.x+8,sc.y);
     lctx.font='500 12px system-ui,sans-serif';
   });
+  const effDirNow = effectiveBeamDir();
   spheres.forEach((sm,i)=>{
     const w=WORDS[i];
-    const angle=Math.acos(Math.max(-1,Math.min(1,beamDir.dot(normVecs[i]))));
+    const angle=Math.acos(Math.max(-1,Math.min(1,effDirNow.dot(normVecs[i]))));
     const lit=angle<halfAngle;
     const sc=project(sm.position);
     const tw=lctx.measureText(w.label).width;
@@ -300,6 +418,24 @@ function animate(){
     lctx.fill();
     lctx.fillStyle=lit?'#ffdd44':w.hex;
     lctx.fillText(w.label,sc.x+10,sc.y);
+  });
+  exampleSpheres.forEach((sm,i)=>{
+    const label=(PRESET_EXAMPLES[activePresetLabel]||[])[i];
+    const phrase=(PRESET_EXAMPLE_PHRASES[activePresetLabel]||[])[i];
+    if(!label) return;
+    const col=EXAMPLE_COLORS[i];
+    const sc=project(sm.position);
+    const text=`ex${i+1}: ${phrase}`;
+    const tw=lctx.measureText(text).width;
+    const pad=4;
+    lctx.fillStyle='rgba(15,15,15,0.88)';
+    lctx.beginPath();
+    lctx.roundRect(sc.x+12-pad,sc.y-13,tw+pad*2,18,3);
+    lctx.fill();
+    lctx.fillStyle=col;
+    lctx.font='700 12px system-ui,sans-serif';
+    lctx.fillText(text,sc.x+12,sc.y);
+    lctx.font='500 12px system-ui,sans-serif';
   });
 }
 updateViz();
